@@ -1,11 +1,13 @@
 import os
 import glob
+import tiktoken
 
+from dotenv import load_dotenv
 from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 
 
+load_dotenv()
 
 def read_docments(data_dir = "resources"):
     document = []
@@ -18,7 +20,14 @@ def read_docments(data_dir = "resources"):
     return document
 
 def chunkify(document):
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-    chunks = text_splitter.split_documents(document)
+    encoding = tiktoken.get_encoding(os.getenv("TOKEN_ENCODING"))
+    tokens = encoding.encode(document[0].page_content)
+
+    chunk_size = 1000
+    chunk_overlap = 200
+    chunks = []
+    for i in range(0, len(tokens), chunk_size - chunk_overlap):
+        chunk = tokens[i:i + chunk_size]
+        chunks.append(encoding.decode(chunk))
     print("Document chunked successfully.")
     return chunks
