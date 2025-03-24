@@ -82,8 +82,6 @@ faiss/
     index.faiss
 ```
 
-
-
 ## Acknowledgments
 
 - [OpenAI](https://openai.com) for GPT-3.5-turbo.
