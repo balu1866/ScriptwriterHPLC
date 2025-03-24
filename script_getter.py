@@ -1,144 +1,53 @@
-
-import re
-import json
-import random
-import tiktoken
+import openai
 import os
-import prompts
-import pdb
+import faiss
+import numpy as np
 
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM
 from dotenv import load_dotenv
-from transformers import pipeline
+from sentence_transformers import SentenceTransformer
 
-
-model_name = "mistralai/Mistral-7B-Instruct-v0.3"
-
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto")
-paraphraser = pipeline("text-generation", model = model, tokenizer = tokenizer)
-
-import pdb
-import prompts
-from dotenv import load_dotenv
-from huggingface_hub import InferenceClient
 load_dotenv()
+openai_client = openai.Client(api_key=os.getenv("OPENAI_API_KEY"))
+model = SentenceTransformer(os.getenv("EMBEDDING_MODEL"))
+index = faiss.read_index(os.getenv("VECTOR_STORE"))
 
-def clean_text(text):
-    return re.sub(r'[\s]+|[-\\*]', ' ', text.strip())
+print(index.d)
+
+mappings = {}
+
+with open(os.getenv("VECTOR_MAPPING"), "r") as f:
+    for line in f:
+        idx, text = line.split("||")
+        mappings[int(idx)] = text
+
+def get_script(idea):
 
 
-def generate_variants(text, max_variants=1):
-    """Generates paraphrased variants of the input text."""
-    prompt = prompts.VARIANCE_PROMPT.format(text=text)
-    response = paraphraser(
-        prompt,
-        max_new_tokens=400,
-        do_sample=True,
-        num_return_sequences=max_variants,
-        temperature=0.8,         # Increased for creative language
-        top_p=0.8,               # Diverse phrasing and richer details
-        repetition_penalty=1.5,  # Breaks repetitive phrasing
-        length_penalty=3.0,
-        return_full_text=False
+    query_vector = openai_client.embeddings.create(
+        input=idea,
+        model=os.getenv("OPENAI_EMBEDDING_MODEL")
+    ).data[0].embedding
+    query = np.array(query_vector).reshape(1, -1)
+    D, I = index.search(query, k=5)
+    context = [mappings[i] for i in I[0]]
 
+    response = openai_client.chat.completions.create(
+        model="chatgpt-4o-latest",
+        messages=[
+            {"role": "system", "content": "You are a successful horror script writer inspired by H. P. Lovecraft."},
+            {"role": "user", "content": f"Based on the following information, draw inspiration from these short clippings of text from the author H. P. Lovecraft: {context} and give a 2000 worded short horror story from the idea: {idea}"}
+        ]
     )
-    breakpoint()
-    texts = [(clean_text(text["generated_text"])) for text in response]
-    return texts
 
+    return response.choices[0].message.content
 
-def split_into_chunks(text):
-    """Splits text into smaller chunks while preserving sentence structure."""
-    encoding = tiktoken.get_encoding(os.getenv("TOKEN_ENCODING"))
-    max_chunk_size=250
+if __name__ == "__main__":
+    idea = "4 college students go on a camping trip to a remote forest and encounter a supernatural entity."
+    script = get_script(idea)
+    try:
+        with open("script.txt", "w") as f:
+            f.write(script)
+        print("Script written to script.txt")
+    except Exception as e:
+        print(f"Error writing to file: {e}")
 
-    # Encode the entire text once
-    tokens = encoding.encode(text)
-    chunks = []
-
-    # Process tokens into chunks
-    for i in range(0, len(tokens), max_chunk_size):
-        chunk = tokens[i:i + max_chunk_size]
-        chunks.append(encoding.decode(chunk))
-
-    return chunks
-
-
-
-with open("az.txt", 'r', encoding='ISO-8859-1') as file:
-    text = file.read()
-
-# Dataset collection
-dataset = []
-
-story_splits = re.split(r'(?=\n[A-Z][A-Z ]+\n)', text)
-
-
-counter = 0
-# Generate dataset entries
-for story in story_splits:
-# Split story into paragraphs
-    paragraphs = story.strip().split('\n\n')  # Split into paragraphs
-
-    # Split large paragraphs into manageable chunks
-    split_paragraphs = [
-        chunk
-        for para in paragraphs
-        for chunk in (split_into_chunks(para) if len(para) > 1000 else [para])
-    ]
-
-    # Dataset generation logic
-    for idx in range(len(split_paragraphs) - 1):  # Iterate up to the second-to-last paragraph
-        prompt_temp = split_paragraphs[idx]
-        if len(prompt_temp) < 200:
-            continue  # Skip short prompts
-
-        prompt = clean_text(prompt_temp)
-
-        # Combine short completions with the next paragraph
-        comp_temp = split_paragraphs[idx + 1]
-        if len(comp_temp) < 200 and idx + 2 < len(split_paragraphs):
-            comp_temp += " " + split_paragraphs[idx + 2]
-
-        completion = clean_text(comp_temp)
-
-        # Metadata for fine-tuning optimization
-        metadata = {
-            "genre": "horror",
-            "emotion": random.choice(["dread", "fear", "mystery"]),
-            "style": random.choice(["descriptive", "poetic", "minimalistic"]),
-            "length": "short"
-        }
-
-        # Original Record
-        dataset.append({
-            "prompt": prompt,
-            "completion": completion,
-            "metadata": metadata
-        })
-
-        # Add paraphrased variants for dataset expansion
-        prompt_variants = generate_variants(prompt, max_variants=1)
-        completion_variants = generate_variants(completion, max_variants=1)
-
-        for p in prompt_variants:
-            for c in completion_variants:
-                dataset.append({
-                    "prompt": clean_text(p),
-                    "completion": clean_text(c),
-                    "metadata": metadata
-                })
-        if(len(dataset) % 50 == 0):
-            counter += len(dataset)
-            with open("dataset.jsonl", 'a', encoding='utf-8') as outfile:
-                # Write the dataset to a JSONL file
-                for entry in dataset:
-                    outfile.write(json.dumps(entry) + "\n")
-                outfile.close()
-                dataset = []  # Clear the dataset after writing
-
-            print(f"Generated {counter} entries so far.")
-
-
-print(f"Dataset successfully created with {len(dataset)} entries.")
