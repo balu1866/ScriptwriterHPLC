@@ -1,31 +1,31 @@
+
 import re
 import json
 import random
-import openai
 import tiktoken
 import os
-# import prompts
+import prompts
 import pdb
 
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM
 from dotenv import load_dotenv
 from transformers import pipeline
 
 
-model_name = "meta-llama/Llama-3.3-70B-Instruct"
+model_name = "mistralai/Mistral-7B-Instruct-v0.3"
 
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto")
 paraphraser = pipeline("text-generation", model = model, tokenizer = tokenizer)
 
-
-
 import pdb
 import prompts
 from dotenv import load_dotenv
+from huggingface_hub import InferenceClient
 load_dotenv()
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+def clean_text(text):
+    return re.sub(r'[\s]+|[-\\*]', ' ', text.strip())
 
 
 def generate_variants(text, max_variants=1):
@@ -33,23 +33,25 @@ def generate_variants(text, max_variants=1):
     prompt = prompts.VARIANCE_PROMPT.format(text=text)
     response = paraphraser(
         prompt,
-        max_length=250,
+        max_new_tokens=400,
         do_sample=True,
         num_return_sequences=max_variants,
-        temperature=1.0,         # Increased for creative language
+        temperature=0.8,         # Increased for creative language
         top_p=0.8,               # Diverse phrasing and richer details
         repetition_penalty=1.5,  # Breaks repetitive phrasing
-        length_penalty=3.0
+        length_penalty=3.0,
+        return_full_text=False
+
     )
     breakpoint()
-    return response
-
+    texts = [(clean_text(text["generated_text"])) for text in response]
+    return texts
 
 
 def split_into_chunks(text):
     """Splits text into smaller chunks while preserving sentence structure."""
     encoding = tiktoken.get_encoding(os.getenv("TOKEN_ENCODING"))
-    max_chunk_size=100
+    max_chunk_size=250
 
     # Encode the entire text once
     tokens = encoding.encode(text)
@@ -62,11 +64,9 @@ def split_into_chunks(text):
 
     return chunks
 
-def clean_text(text):
-    return re.sub(r'[\s]+|[-\\*]', ' ', text.strip())
 
 
-with open("all_lovecraft_stories.txt", 'r', encoding='ISO-8859-1') as file:
+with open("az.txt", 'r', encoding='ISO-8859-1') as file:
     text = file.read()
 
 # Dataset collection
@@ -75,7 +75,8 @@ dataset = []
 story_splits = re.split(r'(?=\n[A-Z][A-Z ]+\n)', text)
 
 
-    # Generate dataset entries
+counter = 0
+# Generate dataset entries
 for story in story_splits:
 # Split story into paragraphs
     paragraphs = story.strip().split('\n\n')  # Split into paragraphs
@@ -121,7 +122,6 @@ for story in story_splits:
         prompt_variants = generate_variants(prompt, max_variants=1)
         completion_variants = generate_variants(completion, max_variants=1)
 
-
         for p in prompt_variants:
             for c in completion_variants:
                 dataset.append({
@@ -129,11 +129,10 @@ for story in story_splits:
                     "completion": clean_text(c),
                     "metadata": metadata
                 })
-        counter = 0
-        if(len(dataset) % 170 == 0):
+        if(len(dataset) % 50 == 0):
+            counter += len(dataset)
             with open("dataset.jsonl", 'a', encoding='utf-8') as outfile:
                 # Write the dataset to a JSONL file
-                counter += len(dataset)
                 for entry in dataset:
                     outfile.write(json.dumps(entry) + "\n")
                 outfile.close()
