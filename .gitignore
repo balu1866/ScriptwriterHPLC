@@ -4,7 +4,7 @@ __pycache__/
 *$py.class
 .env
 .hplcRAG
-
+.DS_Store
 # C extensions
 *.so
 

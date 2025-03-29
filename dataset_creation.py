@@ -125,7 +125,7 @@ for story in story_splits:
         for p in prompt_variants:
             for c in completion_variants:
                 dataset.append({
-                    "prompt": clean_text(p),
+                    "prompt": f"Complete the following text:{clean_text(p)}",
                     "completion": clean_text(c),
                     "metadata": metadata
                 })
